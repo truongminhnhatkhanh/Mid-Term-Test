@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,7 +33,7 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen() {
+fun HomeScreen(role: String) {
     val db = Firebase.firestore
     val auth = Firebase.auth
     val storage = Firebase.storage.reference
@@ -43,42 +45,52 @@ fun HomeScreen() {
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var isUploading by remember { mutableStateOf(false) }
 
-    // Launcher để chọn ảnh
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedImageUri = uri
     }
 
-    LaunchedEffect(Unit) {
-        db.collection("notes")
-            .whereEqualTo("userId", currentUserId)
-            .addSnapshotListener { value, _ ->
-                if (value != null) {
-                    notes = value.documents.map { doc ->
-                        Note(
-                            id = doc.id,
-                            title = doc.getString("title") ?: "",
-                            description = doc.getString("description") ?: "",
-                            imageUrl = doc.getString("imageUrl") ?: "",
-                            userId = doc.getString("userId") ?: ""
-                        )
-                    }
+    LaunchedEffect(role, currentUserId) {
+        val query = if (role == "admin") {
+            db.collection("notes")
+        } else {
+            db.collection("notes").whereEqualTo("userId", currentUserId)
+        }
+
+        query.addSnapshotListener { value, _ ->
+            if (value != null) {
+                notes = value.documents.map { doc ->
+                    Note(
+                        id = doc.id,
+                        title = doc.getString("title") ?: "",
+                        description = doc.getString("description") ?: "",
+                        imageUrl = doc.getString("imageUrl") ?: "",
+                        userId = doc.getString("userId") ?: ""
+                    )
                 }
             }
+        }
     }
 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("My Notes", fontWeight = FontWeight.Bold, color = Color(0xFF444444)) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (role == "admin") {
+                            Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFFF57C00), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (role == "admin") "Admin Panel" else "My Notes", fontWeight = FontWeight.Bold)
+                    }
+                },
                 actions = {
                     IconButton(onClick = { auth.signOut() }) {
                         Icon(Icons.Default.Logout, contentDescription = null, tint = Color.Red)
                     }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.White)
+                }
             )
         },
-        containerColor = Color(0xFFF7F9FB) // Nền xám xanh cực nhạt giúp app trông sạch sẽ
+        containerColor = Color(0xFFF7F9FB)
     ) { padding ->
         Column(
             modifier = Modifier
@@ -86,7 +98,6 @@ fun HomeScreen() {
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
         ) {
-            // --- KHU VỰC NHẬP LIỆU (Input Card) ---
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -94,17 +105,19 @@ fun HomeScreen() {
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Sửa lỗi TextField candidates bằng cách dùng thuộc tính chuẩn
                     TextField(
                         value = title,
                         onValueChange = { title = it },
                         placeholder = { Text("Tiêu đề ghi chú...") },
                         modifier = Modifier.fillMaxWidth(),
                         colors = TextFieldDefaults.colors(
-                            containerColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent
                         ),
-                        textStyle = LocalTextStyle.current.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        textStyle = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     )
 
                     TextField(
@@ -113,21 +126,18 @@ fun HomeScreen() {
                         placeholder = { Text("Nội dung chi tiết...") },
                         modifier = Modifier.fillMaxWidth(),
                         colors = TextFieldDefaults.colors(
-                            containerColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent
                         )
                     )
 
-                    // Hiển thị ảnh đã chọn (nếu có)
                     selectedImageUri?.let {
                         AsyncImage(
                             model = it,
                             contentDescription = null,
-                            modifier = Modifier
-                                .size(100.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.LightGray),
+                            modifier = Modifier.size(100.dp).clip(RoundedCornerShape(8.dp)).background(Color.LightGray),
                             contentScale = ContentScale.Crop
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -146,8 +156,9 @@ fun HomeScreen() {
                             onClick = {
                                 if (title.isNotEmpty()) {
                                     isUploading = true
+                                    val fileName = "notes/${UUID.randomUUID()}.jpg"
                                     if (selectedImageUri != null) {
-                                        val fileRef = storage.child("notes/${UUID.randomUUID()}.jpg")
+                                        val fileRef = storage.child(fileName)
                                         fileRef.putFile(selectedImageUri!!).addOnSuccessListener {
                                             fileRef.downloadUrl.addOnSuccessListener { uri ->
                                                 db.collection("notes").add(hashMapOf(
@@ -169,9 +180,9 @@ fun HomeScreen() {
                             },
                             enabled = !isUploading,
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD54F)) // Màu vàng Note sáng
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD54F))
                         ) {
-                            if (isUploading) CircularProgressIndicator(size = 20.dp, color = Color.White)
+                            if (isUploading) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
                             else Text("Lưu Note", color = Color.Black, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -180,7 +191,6 @@ fun HomeScreen() {
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // --- DANH SÁCH GHI CHÚ ---
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(notes) { note ->
                     Card(
@@ -205,6 +215,9 @@ fun HomeScreen() {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(note.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Text(note.description, color = Color.Gray, fontSize = 14.sp)
+                                    if (role == "admin") {
+                                        Text("Owner UID: ${note.userId.take(8)}...", fontSize = 10.sp, color = Color.LightGray)
+                                    }
                                 }
                                 IconButton(onClick = { db.collection("notes").document(note.id).delete() }) {
                                     Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF8A80))

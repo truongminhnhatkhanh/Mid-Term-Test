@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import com.example.mid_termtest.ui.theme.MidtermTestTheme
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.firestore
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,10 +35,30 @@ class MainActivity : ComponentActivity() {
             MidtermTestTheme {
                 var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
 
+                // State để lưu quyền hạn người dùng
+                var userRole by remember { mutableStateOf<String?>(null) }
+                val db = Firebase.firestore
+
+                // Kiểm tra quyền mỗi khi currentUser thay đổi
+                LaunchedEffect(currentUser) {
+                    if (currentUser != null) {
+                        db.collection("users").document(currentUser!!.uid).get()
+                            .addOnSuccessListener { doc ->
+                                userRole = doc.getString("role") ?: "user"
+                            }
+                            .addOnFailureListener {
+                                userRole = "user" // Mặc định nếu lỗi
+                            }
+                    } else {
+                        userRole = null
+                    }
+                }
+
                 if (currentUser == null) {
                     AuthScreen(onAuthSuccess = { currentUser = Firebase.auth.currentUser })
                 } else {
-                    HomeScreen()
+                    // Truyền quyền hạn vào HomeScreen để xử lý giao diện Admin/User
+                    HomeScreen(role = userRole ?: "user")
                 }
             }
         }
@@ -47,16 +68,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AuthScreen(onAuthSuccess: () -> Unit) {
     val auth = Firebase.auth
+    val db = Firebase.firestore
     val context = LocalContext.current
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Email, 1: Phone
+    var selectedTab by remember { mutableIntStateOf(0) }
     var isRegisterMode by remember { mutableStateOf(false) }
 
-    // State cho Email
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-
-    // State cho Phone (Đơn giản hóa giao diện)
     var phoneNumber by remember { mutableStateOf("") }
 
     Column(
@@ -84,7 +103,6 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Tab chuyển đổi phương thức
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = Color.Transparent,
@@ -102,35 +120,11 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         if (selectedTab == 0) {
-            // GIAO DIỆN EMAIL
-            AuthTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = "Địa chỉ Email",
-                icon = Icons.Default.Email
-            )
+            AuthTextField(value = email, onValueChange = { email = it }, label = "Địa chỉ Email", icon = Icons.Default.Email)
             Spacer(modifier = Modifier.height(16.dp))
-            AuthTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = "Mật khẩu",
-                icon = Icons.Default.Lock,
-                isPassword = true
-            )
+            AuthTextField(value = password, onValueChange = { password = it }, label = "Mật khẩu", icon = Icons.Default.Lock, isPassword = true)
         } else {
-            // GIAO DIỆN PHONE (Chỉ demo nhập số, Phone Auth thật cần OTP)
-            AuthTextField(
-                value = phoneNumber,
-                onValueChange = { phoneNumber = it },
-                label = "Số điện thoại (+84...)",
-                icon = Icons.Default.Phone
-            )
-            Text(
-                "Lưu ý: Phone Login yêu cầu thiết lập OTP trên Firebase.",
-                color = Color.LightGray,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(top = 8.dp)
-            )
+            AuthTextField(value = phoneNumber, onValueChange = { phoneNumber = it }, label = "Số điện thoại (+84...)", icon = Icons.Default.Phone)
         }
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -141,14 +135,29 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                     if (email.isNotEmpty() && password.isNotEmpty()) {
                         if (isRegisterMode) {
                             auth.createUserWithEmailAndPassword(email, password)
-                                .addOnCompleteListener { if (it.isSuccessful) onAuthSuccess() else Toast.makeText(context, "Lỗi đăng ký", Toast.LENGTH_SHORT).show() }
+                                .addOnCompleteListener { task ->
+                                    if (task.isSuccessful) {
+                                        // TẠO ROLE TRONG FIRESTORE KHI ĐĂNG KÝ
+                                        val uid = auth.currentUser?.uid
+                                        val userData = hashMapOf(
+                                            "email" to email,
+                                            "role" to "user" // Mặc định khi đăng ký là user
+                                        )
+                                        if (uid != null) {
+                                            db.collection("users").document(uid).set(userData)
+                                        }
+                                        onAuthSuccess()
+                                    } else {
+                                        Toast.makeText(context, "Lỗi đăng ký", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                         } else {
                             auth.signInWithEmailAndPassword(email, password)
                                 .addOnCompleteListener { if (it.isSuccessful) onAuthSuccess() else Toast.makeText(context, "Sai tài khoản", Toast.LENGTH_SHORT).show() }
                         }
                     }
                 } else {
-                    Toast.makeText(context, "Tính năng Phone OTP cần cấu hình VerifyPhoneNumber", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Phone OTP yêu cầu cấu hình Firebase", Toast.LENGTH_LONG).show()
                 }
             },
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD54F)),
